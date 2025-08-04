@@ -4,14 +4,14 @@ import torch.nn.functional as F
 import math
 
 
-def get_torch_trans(heads=8, layers=1, channels=64):  #Transformer Encoder
+def get_torch_trans(heads=8, layers=1, channels=64):
     encoder_layer = nn.TransformerEncoderLayer(
         d_model=channels, nhead=heads, dim_feedforward=64, activation="gelu"
     )
     return nn.TransformerEncoder(encoder_layer, num_layers=layers)
 
 
-def Conv1d_with_init(in_channels, out_channels, kernel_size): #一维卷积
+def Conv1d_with_init(in_channels, out_channels, kernel_size): 
     layer = nn.Conv1d(in_channels, out_channels, kernel_size)
     nn.init.kaiming_normal_(layer.weight)
     return layer
@@ -31,7 +31,7 @@ class DiffusionEmbedding(nn.Module):
         self.projection2 = nn.Linear(projection_dim, projection_dim)
 
     def forward(self, diffusion_step):
-        x = self.embedding[diffusion_step]#self.embedding 是一个通过 self.register_buffer 注册的预计算嵌入表
+        x = self.embedding[diffusion_step]
         x = self.projection1(x)
         x = F.silu(x)
         x = self.projection2(x)
@@ -46,7 +46,7 @@ class DiffusionEmbedding(nn.Module):
         return table
 
 
-class diff_CSDI(nn.Module):
+class diff(nn.Module):
     def __init__(self, config, inputdim=2):
         super().__init__()
         self.channels = int(config["channels"])
@@ -55,18 +55,10 @@ class diff_CSDI(nn.Module):
             num_steps=int(config["num_steps"]),
             embedding_dim=int(config["diffusion_embedding_dim"]),
         )
-        '''
-        使用 1D 卷积层将输入数据的维度从 inputdim 投影到 self.channels。
-        这样做的目的是将输入数据扩展到指定的通道数，以便后续层处理。
-        '''
 
         self.input_projection = Conv1d_with_init(inputdim, self.channels, 1)
         self.output_projection1 = Conv1d_with_init(self.channels, self.channels, 1)
-        # self.output_projection1 = Conv1d_with_init(self.channels, 1, 1)
-        '''
-        使用 1D 卷积层将通道数从 self.channels 投影到 1。
-        这样的目的是将中间表示压缩回单一通道，以便输出结果
-        '''
+
         self.output_projection2 = Conv1d_with_init(self.channels, 1, 1)
         nn.init.zeros_(self.output_projection2.weight)
 
@@ -81,9 +73,6 @@ class diff_CSDI(nn.Module):
                 for _ in range(int(config["layers"]))
             ]
         )
-        '''
-        初始化多层残差块，每个残差块的通道数为self.channels
-        '''
 
     def forward(self, x, cond_info, diffusion_step):
         B, inputdim, K, L = x.shape
@@ -95,9 +84,8 @@ class diff_CSDI(nn.Module):
         diffusion_emb = self.diffusion_embedding(diffusion_step)
         
         skip = []
-        attn_weights = None # 新增：初始化注意力权重变量
+        attn_weights = None 
         for layer in self.residual_layers:
-            # 修改：接收注意力权重
             x, skip_connection, attn_weights = layer(x, cond_info, diffusion_emb)
             skip.append(skip_connection)
 
@@ -108,7 +96,6 @@ class diff_CSDI(nn.Module):
         x = self.output_projection2(x)
         x = x.reshape(B, K, L)
         
-        # 修改：模型前向过程返回最后一层的注意力权重
         return x, attn_weights
 
 
@@ -129,7 +116,6 @@ class ResidualBlock(nn.Module):
         self.feature_norm1 = nn.LayerNorm(channels)
         self.feature_norm2 = nn.LayerNorm(channels)
         
-        # self.time_layer and self.feature_layer can be removed if get_torch_trans is not used elsewhere. For now we keep it.
         self.time_layer = get_torch_trans(heads=nheads, layers=1, channels=channels)
 
 
@@ -174,7 +160,6 @@ class ResidualBlock(nn.Module):
         y = x + diffusion_emb
 
         y = self.forward_time(y, base_shape)
-        # 修改：在残差块前向中传递注意力权重
         y, attn_weights = self.forward_feature(y, base_shape)
         y = self.mid_projection(y)
 
@@ -192,5 +177,4 @@ class ResidualBlock(nn.Module):
         residual = residual.reshape(base_shape)
         skip = skip.reshape(base_shape)
 
-        # 修改：返回注意力权重
         return (x + residual) / math.sqrt(2.0), skip, attn_weights
