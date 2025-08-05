@@ -12,8 +12,8 @@ def main():
     cfg = args.config_parser
 
     data_prefix = cfg['file']['data_prefix']
-    true_path = os.path.join(data_prefix, f"true_data_{cfg['train']['type']}_{cfg['train']['miss_rate']}_v2.npz")
-    miss_path = os.path.join(data_prefix, f"miss_data_{cfg['train']['type']}_{cfg['train']['miss_rate']}_v2.npz")
+    true_path = os.path.join(data_prefix, f"true_data_{cfg['train']['type']}_{cfg['train']['miss_rate']}.npz")
+    miss_path = os.path.join(data_prefix, f"miss_data_{cfg['train']['type']}_{cfg['train']['miss_rate']}.npz")
     loaders = get_dataloader(true_path, miss_path,
                              float(cfg['train']['val_ratio']),
                              float(cfg['train']['test_ratio']),

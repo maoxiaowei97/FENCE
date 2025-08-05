@@ -5,7 +5,6 @@ import nni
 
 def parse_args():
     parser = argparse.ArgumentParser(description="FENCE Time Series Imputation")
-
     parser.add_argument(
         "--config",
         type=str,
@@ -27,8 +26,6 @@ def parse_args():
     parser.add_argument('--mode', type=str, default='train',
                         choices=['train', 'eval'],
                         help='Run mode: "train" or "eval".')
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed for reproducibility.")
     parser.add_argument('--guidance', type=str, default=None,
                         choices=['cfg', 'fbg'], help='Guidance method (cfg/fbg).')
     parser.add_argument('--cfg_scale', type=float, default=None,
@@ -46,6 +43,8 @@ def parse_args():
                         help="(eval only) Unconditional model weights path.")
     parser.add_argument("--targetstrategy", type=str, default="mix",
                         choices=["mix","random","historical"])
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility.")
     
     args = parser.parse_args()
 
