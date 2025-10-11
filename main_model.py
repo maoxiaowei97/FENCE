@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 from diff_models import diff
 
-
 class FENCE_base(nn.Module):
     def _calculate_fbg_offset(self, t0, verbose=True):
         lambda_ref = self.max_guidance
@@ -50,6 +49,8 @@ class FENCE_base(nn.Module):
         self.emb_time_dim = int(config["model"]["timeemb"])
         self.emb_feature_dim = int(config["model"]["featureemb"])
         self.target_strategy = config["model"]["target_strategy"]
+        self.device_cond = torch.device("cuda:3")
+        self.device_uncond = torch.device("cuda:4")
 
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim + 1 
         self.embed_layer = nn.Embedding(
@@ -279,19 +280,40 @@ class FENCE_base(nn.Module):
                     log_posterior = torch.zeros(B, self.n_clusters, device=self.device)
 
             for t in range(self.num_steps - 1, -1, -1):
-                # 使用 self.diffmodel_uncond 
                 noisy_observed_uncond = cond_mask * noisy_cond_history[t] + (1.0 - cond_mask) * current_sample
-                diff_input_uncond = torch.cat([torch.zeros_like(noisy_observed_uncond).unsqueeze(1),
-                                                noisy_observed_uncond.unsqueeze(1)], dim=1)
-                predicted_uncond, _ = self.diffmodel_uncond(diff_input_uncond, null_side_info, torch.tensor([t]).to(self.device))
-                
-                # 使用 self.diffmodel_cond 
+                diff_input_uncond_cpu = torch.cat([torch.zeros_like(noisy_observed_uncond).unsqueeze(1), noisy_observed_uncond.unsqueeze(1)], dim=1)
+
                 cond_obs = (cond_mask * observed_data).unsqueeze(1)
                 noisy_target = ((1 - cond_mask) * current_sample).unsqueeze(1)
-                diff_input_cond = torch.cat([cond_obs, noisy_target], dim=1)
-                predicted_cond, attn_cond = self.diffmodel_cond(diff_input_cond, side_info, torch.tensor([t]).to(self.device))
-                                    
-                # self.cluster_update_interval = 1 
+                diff_input_cond_cpu = torch.cat([cond_obs, noisy_target], dim=1)
+
+                s_cond = torch.cuda.Stream(device=self.device_cond)
+                s_uncond = torch.cuda.Stream(device=self.device_uncond)
+
+                with torch.cuda.stream(s_cond):
+                    diff_input_cond = diff_input_cond_cpu.to(self.device_cond, non_blocking=True)
+                    side_info_cond = side_info.to(self.device_cond, non_blocking=True)
+                    time_tensor_cond = torch.tensor([t]).to(self.device_cond)
+                    predicted_cond_on_gpu0, attn_cond_on_gpu0 = self.diffmodel_cond(diff_input_cond, side_info_cond,
+                                                                                    time_tensor_cond)
+
+                with torch.cuda.stream(s_uncond):
+                    diff_input_uncond = diff_input_uncond_cpu.to(self.device_uncond, non_blocking=True)
+                    null_side_info_uncond = null_side_info.to(self.device_uncond, non_blocking=True)
+                    time_tensor_uncond = torch.tensor([t]).to(self.device_uncond)
+                    predicted_uncond_on_gpu1, _ = self.diffmodel_uncond(diff_input_uncond, null_side_info_uncond, time_tensor_uncond)
+
+                s_cond.synchronize()
+                s_uncond.synchronize()
+
+                predicted_cond = predicted_cond_on_gpu0.to(self.device)
+                predicted_uncond = predicted_uncond_on_gpu1.to(self.device)
+
+                if attn_cond_on_gpu0 is not None:
+                    attn_cond = attn_cond_on_gpu0.to(self.device)
+                else:
+                    attn_cond = None
+
                 if self.guidance == 'fbg' and self.fbg_mode == 'cluster' and attn_cond is not None:
                     with torch.no_grad():
                         cluster_labels = self._kmeans_torch_cluster(attn_cond, self.n_clusters, num_iter=10)
