@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diff_models import diff
-
+import threading
 class FENCE_base(nn.Module):
     def _calculate_fbg_offset(self, t0, verbose=True):
         lambda_ref = self.max_guidance
@@ -49,8 +49,9 @@ class FENCE_base(nn.Module):
         self.emb_time_dim = int(config["model"]["timeemb"])
         self.emb_feature_dim = int(config["model"]["featureemb"])
         self.target_strategy = config["model"]["target_strategy"]
-        self.device_cond = torch.device("cuda:3")
-        self.device_uncond = torch.device("cuda:4")
+        self.device_cond = torch.device("cuda:2")
+        self.device_uncond = torch.device("cuda:3")
+        self.results = {}
 
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim + 1 
         self.embed_layer = nn.Embedding(
@@ -252,6 +253,29 @@ class FENCE_base(nn.Module):
             centroids = new_centroids
         return cluster_assignments
 
+    def run_conditional(self, diff_input_cpu, side_info_tensor, time_step):
+        diff_input_cond = diff_input_cpu.to(self.device_cond, non_blocking=True)
+        side_info_cond = side_info_tensor.to(self.device_cond, non_blocking=True)
+        time_tensor_cond = torch.tensor([time_step]).to(self.device_cond)
+        self.diffmodel_cond.to(self.device_cond)
+
+        predicted_cond, attn_cond = self.diffmodel_cond(diff_input_cond, side_info_cond, time_tensor_cond)
+
+        self.results['predicted_cond'] = predicted_cond
+        self.results['attn_cond'] = attn_cond
+
+
+    def run_unconditional(self, diff_input_cpu, null_side_info_tensor, time_step):
+
+        diff_input_uncond = diff_input_cpu.to(self.device_uncond, non_blocking=True)
+        null_side_info_uncond = null_side_info_tensor.to(self.device_uncond, non_blocking=True)
+        time_tensor_uncond = torch.tensor([time_step]).to(self.device_uncond)
+        self.diffmodel_uncond.to(self.device_uncond)
+
+        predicted_uncond, _ = self.diffmodel_uncond(diff_input_uncond, null_side_info_uncond, time_tensor_uncond)
+
+        self.results['predicted_uncond'] = predicted_uncond
+
     def impute(self, observed_data, cond_mask, side_info, n_samples):
         B, K, L = observed_data.shape
         imputed_samples = torch.zeros(B, n_samples, K, L).to(self.device)
@@ -287,24 +311,19 @@ class FENCE_base(nn.Module):
                 noisy_target = ((1 - cond_mask) * current_sample).unsqueeze(1)
                 diff_input_cond_cpu = torch.cat([cond_obs, noisy_target], dim=1)
 
-                s_cond = torch.cuda.Stream(device=self.device_cond)
-                s_uncond = torch.cuda.Stream(device=self.device_uncond)
+                thread_cond = threading.Thread(target=self.run_conditional, args=(diff_input_cond_cpu, side_info, t))
+                thread_uncond = threading.Thread(target=self.run_unconditional, args=(diff_input_uncond_cpu, null_side_info, t))
 
-                with torch.cuda.stream(s_cond):
-                    diff_input_cond = diff_input_cond_cpu.to(self.device_cond, non_blocking=True)
-                    side_info_cond = side_info.to(self.device_cond, non_blocking=True)
-                    time_tensor_cond = torch.tensor([t]).to(self.device_cond)
-                    predicted_cond_on_gpu0, attn_cond_on_gpu0 = self.diffmodel_cond(diff_input_cond, side_info_cond,
-                                                                                    time_tensor_cond)
+                thread_cond.start()
+                thread_uncond.start()
 
-                with torch.cuda.stream(s_uncond):
-                    diff_input_uncond = diff_input_uncond_cpu.to(self.device_uncond, non_blocking=True)
-                    null_side_info_uncond = null_side_info.to(self.device_uncond, non_blocking=True)
-                    time_tensor_uncond = torch.tensor([t]).to(self.device_uncond)
-                    predicted_uncond_on_gpu1, _ = self.diffmodel_uncond(diff_input_uncond, null_side_info_uncond, time_tensor_uncond)
+                thread_cond.join()
+                thread_uncond.join()
 
-                s_cond.synchronize()
-                s_uncond.synchronize()
+                attn_cond_on_gpu0 = self.results['attn_cond']
+                predicted_uncond_on_gpu1 = self.results['predicted_uncond']
+                predicted_cond_on_gpu0 = self.results['predicted_cond']
+
 
                 predicted_cond = predicted_cond_on_gpu0.to(self.device)
                 predicted_uncond = predicted_uncond_on_gpu1.to(self.device)
@@ -364,6 +383,7 @@ class FENCE_base(nn.Module):
                         diff = cond_mse - uncond_mse
                     log_posterior = self.update_logp(log_posterior, diff, sigma_sq, cluster_labels)
                 current_sample = next_sample
+
             imputed_samples[:, i] = current_sample.detach() 
                 
         return imputed_samples
