@@ -8,7 +8,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="config/PEMS08.conf",
+        default="config/PEMS04.conf",
         help="Path to the base config file. Dataset name is inferred from this path."
     )
     parser.add_argument(
@@ -45,11 +45,11 @@ def parse_args():
                         choices=["mix","random","historical"])
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility.")
-    
+    parser.add_argument("--logfile", type=str, default=None,
+                        help="Path to the logfile.")
     args = parser.parse_args()
 
     if args.dataset:
-        args.config = f"config/{args.dataset}.conf"
         args.dataset_name = args.dataset
     else:
         args.dataset_name = os.path.splitext(os.path.basename(args.config))[0]

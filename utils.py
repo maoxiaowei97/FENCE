@@ -23,7 +23,7 @@ def set_seed(seed):
         torch.backends.cudnn.benchmark = False
 
 class EarlyStopping:
-    def __init__(self, patience=5, verbose=False, delta=0, path='checkpoint.pt', trace_func=print):
+    def __init__(self, patience=5, verbose=False, delta=0, path='checkpoint.pt', trace_func=logging.info):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -99,7 +99,7 @@ def train(
 
     train_start = time.time()
     # phase train
-    print(f"--- Starting Phase 1: Unconditional Pre-training (Max Epochs: {phase1_epochs}) ---")
+    logging.info(f"--- Starting Phase 1: Unconditional Pre-training (Max Epochs: {phase1_epochs}) ---")
     for epoch_no in range(phase1_epochs):
         avg_loss = 0
         model.train() 
@@ -115,7 +115,7 @@ def train(
             optimizer_1.step()
         
         avg_loss /= (batch_no + 1)
-        print(f"Phase 1 - Epoch: {epoch_no+1}/{phase1_epochs}, Avg Train Loss: {avg_loss:.6f}, LR: {optimizer_1.param_groups[0]['lr']:.6f}")
+        logging.info(f"Phase 1 - Epoch: {epoch_no+1}/{phase1_epochs}, Avg Train Loss: {avg_loss:.6f}, LR: {optimizer_1.param_groups[0]['lr']:.6f}")
         lr_scheduler_1.step()
 
         if valid_loader is not None and (epoch_no + 1) % valid_epoch_interval == 0:
@@ -126,19 +126,19 @@ def train(
                     loss = model(valid_batch, is_train=0, is_phase1=True)
                     avg_loss_valid += loss.item()
             avg_loss_valid /= batch_no_val
-            print(f"Phase 1 - Valid Epoch: {epoch_no}, Avg Valid Loss: {avg_loss_valid:.6f}")
+            logging.info(f"Phase 1 - Valid Epoch: {epoch_no}, Avg Valid Loss: {avg_loss_valid:.6f}")
             
             early_stopper_1(avg_loss_valid, model.diffmodel_uncond)
             if early_stopper_1.early_stop:
-                print("Early stopping triggered in Phase 1.")
+                logging.info("Early stopping triggered in Phase 1.")
                 break
     
-    print("--- End of Phase 1 ---")
-    print(f"Loading best unconditional model from: {uncond_model_save_path} before starting Phase 2")
+    logging.info("--- End of Phase 1 ---")
+    logging.info(f"Loading best unconditional model from: {uncond_model_save_path} before starting Phase 2")
     model.diffmodel_uncond.load_state_dict(torch.load(uncond_model_save_path, map_location=model.device))
     model.diffmodel_cond.load_state_dict(torch.load(uncond_model_save_path, map_location=model.device))
     # phase2 train
-    print(f"--- Starting Phase 2: Conditional Fine-tuning (Max Epochs: {phase2_epochs}) ---")
+    logging.info(f"--- Starting Phase 2: Conditional Fine-tuning (Max Epochs: {phase2_epochs}) ---")
     for epoch_no_phase2 in range(phase2_epochs):
         avg_loss = 0
         model.train() 
@@ -154,7 +154,7 @@ def train(
             optimizer_2.step()
         
         avg_loss /= (batch_no + 1)
-        print(f"Phase 2 - Epoch: {epoch_no_phase2}/{phase2_epochs-1}, Avg Train Loss: {avg_loss:.6f}, LR: {optimizer_2.param_groups[0]['lr']:.6f}")
+        logging.info(f"Phase 2 - Epoch: {epoch_no_phase2}/{phase2_epochs-1}, Avg Train Loss: {avg_loss:.6f}, LR: {optimizer_2.param_groups[0]['lr']:.6f}")
         lr_scheduler_2.step()
 
         if valid_loader is not None and (epoch_no_phase2 + 1) % valid_epoch_interval == 0:
@@ -165,19 +165,19 @@ def train(
                     loss = model(valid_batch, is_train=0, is_phase1=False)
                     avg_loss_valid += loss.item()
             avg_loss_valid /= batch_no_val
-            print(f"Phase 2 - Valid Epoch: {epoch_no_phase2}, Avg Valid Loss: {avg_loss_valid:.6f}")
+            logging.info(f"Phase 2 - Valid Epoch: {epoch_no_phase2}, Avg Valid Loss: {avg_loss_valid:.6f}")
             
             early_stopper_2(avg_loss_valid, model.diffmodel_cond)
             if early_stopper_2.early_stop:
-                print("Early stopping triggered in Phase 2.")
+                logging.info("Early stopping triggered in Phase 2.")
                 break
 
-    print("Training finished.")
-    print(f"Loading best conditional model from: {cond_model_save_path}")
+    logging.info("Training finished.")
+    logging.info(f"Loading best conditional model from: {cond_model_save_path}")
     model.diffmodel_cond.load_state_dict(torch.load(cond_model_save_path, map_location=model.device))
     
     train_end_time = time.time()
-    print(f"Total training time: {train_end_time - train_start:.2f} seconds")
+    logging.info(f"Total training time: {train_end_time - train_start:.2f} seconds")
 
 def quantile_loss(target, forecast, q: float, eval_points) -> float:
     return 2 * torch.sum(
@@ -227,7 +227,7 @@ def evaluate(model, test_loader, _std,_mean,use_nni, nsample=10, results_file=No
             mean_scaler = torch.tensor(_mean, device=device, dtype=torch.float32)
         else:
             mean_scaler = _mean.to(device)
-        print("START TEST...")
+        logging.info("START TEST...")
         with tqdm(test_loader, mininterval=5.0, maxinterval=50.0) as it: 
             for batch_no, test_batch in enumerate(it, start=1):  #
                 output = model.evaluate(test_batch, nsample)
@@ -278,12 +278,13 @@ def evaluate(model, test_loader, _std,_mean,use_nni, nsample=10, results_file=No
         final_evalpoint = torch.cat(all_evalpoint, dim=0)
         final_crps = calc_quantile_CRPS(
             final_target, final_samples, final_evalpoint, mean_scaler, scaler)
-        print(f"RMSE: {final_rmse}")
-        print(f"MAE: {final_mae}")
-        print(f"MAPE: {final_mape}")
-        print(f"CRPS: {final_crps:.4f}")
+        logging.info(f"RMSE: {final_rmse}")
+        logging.info(f"MAE: {final_mae}")
+        logging.info(f"MAPE: {final_mape}")
+        logging.info(f"CRPS: {final_crps:.4f}")
             
         if results_file:
+            miss_type = model.config['train']['type']
             miss_rate = model.config['train']['miss_rate']
             guidance_method = model.guidance
             
@@ -300,14 +301,14 @@ def evaluate(model, test_loader, _std,_mean,use_nni, nsample=10, results_file=No
                 writer = csv.writer(csvfile)
                 if not file_exists:
                     writer.writerow([
-                        'miss_rate', 'guidance_method', 'guidance_param_value', 
+                        'miss_type','miss_rate', 'guidance_method', 'guidance_param_value',
                         'rmse', 'mae', 'mape','crps'
                     ])
                 
                 writer.writerow([
-                    miss_rate, guidance_method, guidance_param_value,
+                    miss_type,miss_rate, guidance_method, guidance_param_value,
                     f"{final_rmse:.4f}", f"{final_mae:.4f}", f"{final_mape:.4f}",f"{final_crps:.4f}"
                 ])
-            print(f"results file saved to: {results_file}")
+            logging.info(f"results file saved to: {results_file}")
     test_end_time = time.time()
-    print("Testing time:", test_end_time - test_start)
+    logging.info(f"Testing time: {test_end_time - test_start} ")

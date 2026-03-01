@@ -39,10 +39,10 @@ class DiffusionEmbedding(nn.Module):
         return x
 
     def _build_embedding(self, num_steps, dim=64):
-        steps = torch.arange(num_steps).unsqueeze(1)  # (T,1)
-        frequencies = 10.0 ** (torch.arange(dim) / (dim - 1) * 4.0).unsqueeze(0)  # (1,dim)
-        table = steps * frequencies  # (T,dim)
-        table = torch.cat([torch.sin(table), torch.cos(table)], dim=1)  # (T,dim*2)
+        steps = torch.arange(num_steps).unsqueeze(1)
+        frequencies = 10.0 ** (torch.arange(dim) / (dim - 1) * 4.0).unsqueeze(0)
+        table = steps * frequencies
+        table = torch.cat([torch.sin(table), torch.cos(table)], dim=1)
         return table
 
 
@@ -134,19 +134,16 @@ class ResidualBlock(nn.Module):
             return y, None
             
         y = y.reshape(B, channel, K, L).permute(0, 3, 2, 1).reshape(B * L, K, channel)
-        
-        # 手动执行Transformer Encoder层的操作
+
         y_norm = self.feature_norm1(y)
         attn_output, attn_weights = self.feature_attn(y_norm, y_norm, y_norm, need_weights=True)
         y = y + attn_output
         
         ffn_output = self.feature_ffn(self.feature_norm2(y))
         y = y + ffn_output
-        
-        # 将维度恢复并返回权重
+
         y = y.reshape(B, L, K, channel).permute(0, 3, 2, 1).reshape(B, channel, K * L)
-        
-        # 对L维度上的注意力权重取平均，得到(B, K, K)
+
         attn_weights = attn_weights.view(B, L, K, K).mean(dim=1)
         
         return y, attn_weights

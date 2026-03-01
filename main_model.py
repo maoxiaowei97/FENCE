@@ -49,8 +49,8 @@ class FENCE_base(nn.Module):
         self.emb_time_dim = int(config["model"]["timeemb"])
         self.emb_feature_dim = int(config["model"]["featureemb"])
         self.target_strategy = config["model"]["target_strategy"]
-        self.device_cond = torch.device("cuda:2")
-        self.device_uncond = torch.device("cuda:3")
+        self.device_cond = torch.device(config["model"].get("cond_device", str(device)))
+        self.device_uncond = torch.device(config["model"].get("uncond_device", str(device)))
         self.results = {}
 
         self.emb_total_dim = self.emb_time_dim + self.emb_feature_dim + 1 
@@ -168,7 +168,7 @@ class FENCE_base(nn.Module):
         self, observed_data, cond_mask, observed_mask, side_info, is_train, is_phase1
     ):
         loss_sum = 0
-        for t in range(self.num_steps):  # calculate loss for all t
+        for t in range(self.num_steps):
             loss = self.calc_loss(
                 observed_data, cond_mask, observed_mask, side_info, is_train, is_phase1, set_t=t
             )
@@ -177,7 +177,7 @@ class FENCE_base(nn.Module):
 
     def calc_loss(self, observed_data, cond_mask, observed_mask, side_info, is_train, is_phase1,set_t=-1):
             B, K, L = observed_data.shape
-            if not is_train:  # for validation
+            if not is_train:
                 t = (torch.ones(B) * set_t).long().to(self.device)
             else:
                 t = torch.randint(0, self.num_steps, [B]).to(self.device)
@@ -186,7 +186,7 @@ class FENCE_base(nn.Module):
             noise = torch.randn_like(observed_data)
             noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
-            if is_phase1: # phase 1: unconditional
+            if is_phase1:
                 input_uncond = torch.cat([torch.zeros_like(noisy_data).unsqueeze(1), noisy_data.unsqueeze(1)], dim=1)
                 null_side_info = side_info.clone()
                 null_side_info[:, -1:, :, :] = 0
@@ -194,7 +194,7 @@ class FENCE_base(nn.Module):
                 predicted, _ = self.diffmodel_uncond(input_uncond, null_side_info, t)
                 
                 target_mask = observed_mask
-            else: # phase 2: conditional
+            else:
                 input_cond = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask)
                 
                 predicted, _ = self.diffmodel_cond(input_cond, side_info, t)
@@ -207,7 +207,6 @@ class FENCE_base(nn.Module):
 
             return loss
 
-
     def set_input_to_diffmodel(self, noisy_data, observed_data, cond_mask):
         cond_obs = (cond_mask * observed_data).unsqueeze(1)
         noisy_target = ((1 - cond_mask) * noisy_data).unsqueeze(1)
@@ -215,13 +214,14 @@ class FENCE_base(nn.Module):
         return total_input
 
     def update_logp(self, prev_log_posterior, diff, sigma_sq, cluster_labels=None):
-        B, K = diff.shape
-        if self.fbg_mode in["global","spatial"]:   
-            log_posterior = prev_log_posterior - self.temp / (2 * sigma_sq) * diff + self.offset 
+        if self.fbg_mode in ["global", "spatial"]:
+            log_posterior = prev_log_posterior - self.temp / (2 * sigma_sq) * diff + self.offset
         elif self.fbg_mode == "cluster":
-            cluster_diff = torch.zeros(B, self.n_clusters, device=self.device)   
+            B = diff.shape[0]
+            cluster_diff = torch.zeros(B, self.n_clusters, device=self.device)
             cluster_diff.scatter_add_(dim=1, index=cluster_labels, src=diff)
             log_posterior = prev_log_posterior - self.temp / (2 * sigma_sq) * cluster_diff + self.offset
+
         return torch.clamp(log_posterior, min=self.minimal_log_posterior, max=3.0)
 
     def _kmeans_torch_cluster(self, features, n_clusters, num_iter=20):
@@ -264,7 +264,6 @@ class FENCE_base(nn.Module):
         self.results['predicted_cond'] = predicted_cond
         self.results['attn_cond'] = attn_cond
 
-
     def run_unconditional(self, diff_input_cpu, null_side_info_tensor, time_step):
 
         diff_input_uncond = diff_input_cpu.to(self.device_uncond, non_blocking=True)
@@ -285,7 +284,6 @@ class FENCE_base(nn.Module):
         for i in range(n_samples):
             current_sample = torch.randn_like(observed_data)
 
-            # generate noisy observation for unconditional model
             noisy_obs = observed_data.clone()
             noisy_cond_history = []
             for t in range(self.num_steps):

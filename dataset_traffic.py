@@ -7,7 +7,6 @@ class Traffic_Dataset(Dataset):
         self.observed_masks = observed_masks
         self.gt_masks = gt_mask
         self.observed_data = c_data
-        
 
         if isTest:  
             self.observed_data = true_data
@@ -75,7 +74,6 @@ def get_dataloader(true_datapath,miss_datapath,val_ratio,test_ratio, batch_size=
     train_X, train_Y,  train_mask,train_gtmask = get_sample_by_overlaped_Sliding_window(train_X, train_Y,  train_mask,train_gtmask, eval_length)
     val_X, val_Y,  val_mask,val_gtmask = get_sample_by_overlaped_Sliding_window( val_X, val_Y,  val_mask, val_gtmask,eval_length)
     test_X, test_Y, test_mask,test_gtmask = get_sample_by_overlaped_Sliding_window(test_X, test_Y, test_mask, test_gtmask,eval_length)
-    
 
 
     dataset = Traffic_Dataset(
